@@ -1,0 +1,10 @@
+[project]
+name = "ebird-analyse"
+version = "0.1.0"
+description = "Data Science Project Code"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx",
+  "python-dotenv",
+]
