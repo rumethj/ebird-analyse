@@ -1,0 +1,25 @@
+[project]
+name = "data-science"
+version = "0.1.0"
+description = "eBird Data Analysis - Data collection and analysis for bird observation data"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Rumeth Jayasinghe"}
+]
+
+dependencies = [
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "openmeteo_requests",
+    "requests_cache",
+    "retry_requests",
+]
+
+
+
