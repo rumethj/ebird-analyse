@@ -14,7 +14,7 @@ import pandas as pd
 from pandas import DataFrame
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
-from datetime import date
+from datetime import date, datetime
 from .base import DataHandler, TSVConfig
 import asyncio
 
@@ -33,6 +33,8 @@ from retry_requests import retry
 
 @dataclass
 class WeatherDataHandler(DataHandler):
+        
+    file_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def __post_init__(self):
         # Setup the Open-Meteo API client with cache and retry on error
@@ -40,9 +42,10 @@ class WeatherDataHandler(DataHandler):
         retry_session = retry(cache_session, retries = 5, backoff_factor = 0.2)
         self.openmeteo = openmeteo_requests.Client(session = retry_session)
 
-        self.date_loc_dir_path = self._get_absolute_path("data/weather_helper/date_loc")
-        self.date_loc_status_file_path = self._get_absolute_path("data/weather_helper/date_loc_status/done.txt")
-    
+        self.date_loc_file = self._get_absolute_path("data/weather_helper/date_loc/date_range_loc.tsv")
+        self.date_loc_status_file_path = self._get_absolute_path("data/weather_helper/date_loc_status/done.tsv")
+        self.weather_data_path = self._get_absolute_path("data/weather/weather.tsv")
+
     
     async def _make_weather_api_request(self, location_data: dict, start_date: date, end_date: date):
         # Ref: https://open-meteo.com/en/docs/historical-weather-api?latitude=6.3772655&longitude=80.1361152&start_date=2022-01-01&end_date=2025-11-01&hourly=temperature_2m,weather_code,rain,cloud_cover,apparent_temperature,wind_speed_10m&timezone=Asia%2FBangkok
@@ -55,10 +58,19 @@ class WeatherDataHandler(DataHandler):
             "longitude": location_data["longitude"],
             "start_date": start_date.strftime("%Y-%m-%d"),
             "end_date": end_date.strftime("%Y-%m-%d"),
-            "hourly": ["temperature_2m", "apparent_temperature", "rain", "weather_code", "cloud_cover", "cloud_cover_mid", "cloud_cover_high", "cloud_cover_low", "wind_speed_10m", "wind_speed_100m"],
+            "hourly": ["temperature_2m", "apparent_temperature", "rain", "weather_code", "cloud_cover", "cloud_cover_mid", "cloud_cover_high", "cloud_cover_low", "wind_speed_10m", "wind_speed_100m",  "wind_direction_100m", "wind_direction_10m"],
             "timezone": "GMT+5:30"
         }
-        responses = self.openmeteo.weather_api(url, params=params)
+        try:
+            # OLD (Blocking)
+            # responses = self.openmeteo.weather_api(url, params=params)
+
+            # NEW (Non-blocking wrapper)
+            # We offload the blocking call to a thread, making it awaitable
+            responses = await asyncio.to_thread(self.openmeteo.weather_api, url, params=params)
+        except Exception as e:
+            print(f"Error occured making weather request: {e}")
+            raise
 
         # Process first location. Add a for-loop for multiple locations or weather models
         response = responses[0]
@@ -78,6 +90,8 @@ class WeatherDataHandler(DataHandler):
         hourly_cloud_cover_low = hourly.Variables(7).ValuesAsNumpy()
         hourly_wind_speed_10m = hourly.Variables(8).ValuesAsNumpy()
         hourly_wind_speed_100m = hourly.Variables(9).ValuesAsNumpy()
+        hourly_wind_direction_100m = hourly.Variables(10).ValuesAsNumpy()
+        hourly_wind_direction_10m = hourly.Variables(11).ValuesAsNumpy()
 
         hourly_data = {"date": pd.date_range(
             start = pd.to_datetime(hourly.Time(), unit = "s", utc = True),
@@ -96,33 +110,56 @@ class WeatherDataHandler(DataHandler):
         hourly_data["cloud_cover_low"] = hourly_cloud_cover_low
         hourly_data["wind_speed_10m"] = hourly_wind_speed_10m
         hourly_data["wind_speed_100m"] = hourly_wind_speed_100m
+        hourly_data["wind_direction_100m"] = hourly_wind_direction_100m
+        hourly_data["wind_direction_10m"] = hourly_wind_direction_10m
+
 
         hourly_dataframe = pd.DataFrame(data = hourly_data)
         # print("\nHourly data\n", hourly_dataframe)
 
         hourly_dataframe["locId"] = location_data["locId"]
         
-        file_path = "data/weather/weather.tsv"
-        file_path = self. _get_absolute_path(file_path)
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-            hourly_dataframe.to_csv(file_path, sep='\t', index=False)
-        else:
-            hourly_dataframe.to_csv(file_path, sep='\t', index=False, mode='a', header=False)
+        async with self.file_lock:
+            os.makedirs(os.path.dirname(self.weather_data_path), exist_ok=True)
+            if not os.path.exists(self.weather_data_path) or os.path.getsize(self.weather_data_path) == 0:
+                hourly_dataframe.to_csv(self.weather_data_path, sep='\t', index=False)
+            else:
+                hourly_dataframe.to_csv(self.weather_data_path, sep='\t', index=False, mode='a', header=False)
 
 
-    async def fetch_weather_data_for_date_loc_pairs(self, date_loc_pairs: DataFrame, loc_lookup: Dict[str, Dict[str, Any]]) -> None:
-        # 1. Create the Semaphore
+    async def fetch_weather_data(self, loc_lookup: Dict[str, Dict[str, Any]]) -> None:
+        # Get already completed requests
+        try: 
+            completed_date_loc_df = pd.read_csv(self.date_loc_status_file_path, sep="\t")
+        except pd.errors.EmptyDataError:
+            completed_date_loc_df = pd.DataFrame(columns=["locId", "start_date", "end_date"])
+
+
+        # Get the full list of date-location pairs
+        all_date_loc_df = pd.read_csv(self.date_loc_file, sep="\t")
+
+        
+        # Perform an outer join and add an indicator column
+        merged = pd.merge(all_date_loc_df, completed_date_loc_df, how='outer', indicator=True)
+        # Filter for rows that exist only in the 'left' DataFrame (all_date_loc_df)
+        incomplete_date_loc_df = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
+
+        if incomplete_date_loc_df.empty:
+            return
+
+
+        print("Number of incompletes date loc pairs: ", len(incomplete_date_loc_df))
+        
         sem = asyncio.Semaphore(20)
 
         async def processing_worker(row):
-            """
+            """ 
             This function handles the logic for a single row, 
             wrapped in the semaphore to limit concurrency.
             """
             async with sem:
-                date = row["date"]
+                start_date = datetime.strptime(row["start_date"], "%Y-%m-%d").date()
+                end_date = datetime.strptime(row["end_date"], "%Y-%m-%d").date()
                 loc_id = row["locId"]
                 
                 # Fast lookup from our pre-made dictionary
@@ -135,41 +172,64 @@ class WeatherDataHandler(DataHandler):
                         "longitude": loc_info["longitude"]
                     }
                     # This is the actual network call
-                    await self.make_weather_api_request(loc_data, date, date)
+                    try:
+                        await self._make_weather_api_request(loc_data, start_date, end_date)
+                        # On success, return the identifiers to be marked as complete
+                        return row
+                        # return {"date": row["date"], "locId": loc_id}
+                    except Exception as e:
+                        print(f"!!! Task for {loc_id} Failed: {e}")
+                        raise # Re-raise the exception to be caught in the loop
 
-        # 2. Create a list of coroutine objects (tasks) - Do not await here!
-        tasks = []
-        for index, row in date_loc_pairs.iterrows():
-            tasks.append(processing_worker(row))
+        # 2. Create a list of coroutine objects (tasks)
+        # task_list = [asyncio.create_task(processing_worker(row)) for row in incomplete_date_loc_df.to_dict('records')]
 
-        # 3. Run them all concurrently
-        await asyncio.gather(*tasks)
-    
-    
-    async def fetch_weather_data(self, loc_lookup: Dict[str, Dict[str, Any]]) -> None:
-        # List files in date_loc_path
-        date_loc_files_list = os.listdir(self.date_loc_dir_path)
 
-        # Get already completed requests
-        completed = set()
+        rows = incomplete_date_loc_df.to_dict('records')
+        tasks = [] # We will store the task objects here to check results later
+
         try:
-            with open(self.date_loc_status_file_path, "r") as f:
-                for line in f.readlines():
-                    completed.add(line.strip())
-        except FileNotFoundError:
-            pass
+            async with asyncio.TaskGroup() as tg:
+                # 2. Create the list INSIDE the group using 'tg'
+                # This starts them and links them to the group's error handler
+                tasks = [
+                    tg.create_task(processing_worker(row)) 
+                    for row in rows
+                ]
+                
+                # The code will block here automatically until all tasks are done
+                # or until one fails (which triggers the group to cancel the others).
+                
+        except ExceptionGroup as e:
+            print(f"One task failed! The others were cancelled: {e}")
 
-        # Get the incomplete files that havent been processed
-        incomplete_date_loc_pairs = [path for path in date_loc_files_list if path not in completed]
+        # 2. Find out EXACTLY what happened to each task
+        for i, task in enumerate(tasks):
+            if task.cancelled():
+                # print(f"Row {i+1}: CANCELLED (Stopped because another task failed)")
+                pass
 
-        # Pick one from the incomplete list per run
-        date_loc_file = incomplete_date_loc_pairs[0]
-        date_loc_df = pd.read_csv(date_loc_file, sep="\t")
+            elif task.exception():
+                # GET THE INTERNAL EXCEPTION HERE
+                exc = task.exception()
+                print(f"Row {i+1}: FAILED with error type: {type(exc).__name__}")
+                print(f"       -> Message: {exc}")
+                
+            else:
+                print(f"Row {i+1}: SUCCESS -> {task.result()}")
 
-        await self.fetch_weather_data_for_date_loc_pairs(date_loc_df, loc_lookup)
 
-        completed.add(date_loc_file)
-        
-        # Update date_loc_status file
-        with open(self.date_loc_status_file_path, "w") as f:
-            f.write("\n".join(completed))
+        successful_rows = []
+        for t in tasks:
+            # We only want tasks that finished successfully
+            if t.done() and not t.cancelled() and not t.exception():
+                successful_rows.append(t.result())
+
+
+        if successful_rows:
+            newly_completed_df = pd.DataFrame(successful_rows)
+            # Append all newly completed tasks to the status file in one go
+            if not os.path.exists(self.date_loc_status_file_path) or os.path.getsize(self.date_loc_status_file_path) == 0:
+                newly_completed_df.to_csv(self.date_loc_status_file_path, sep='\t', index=False)
+            else:
+                newly_completed_df.to_csv(self.date_loc_status_file_path, sep='\t', index=False, mode='a', header=False)

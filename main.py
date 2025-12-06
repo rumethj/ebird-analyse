@@ -20,19 +20,25 @@ async def get_loc_date_pairs(checklist_df: DataFrame) -> DataFrame():
     unique_date_loc_id_pairs = checklist_date_loc_id_pairs[["date", "locId"]].drop_duplicates()
     print(f"Number of rows of loc_date pairs: {len(unique_date_loc_id_pairs)}")
 
-    # write unique_date_loc_id_pairs to files to save state (4000 rows max per file)
-    max_rows = 4500
-    i = 0
-    print(f"Number of files to create: {len(unique_date_loc_id_pairs) // max_rows + 1}")
-    while True:
-        i+=1
-        chunk = unique_date_loc_id_pairs.iloc[(i-1)*max_rows:i*max_rows]
-        if chunk.empty:
-            break
-        chunk.to_csv(UtilDataHandler()._get_absolute_path(f"data/weather_helper/date_loc/date_loc_{i}.tsv"), sep="\t", index=False)
+    # write unique_date_loc_id_pairs to files
+    unique_date_loc_id_pairs.to_csv(UtilDataHandler()._get_absolute_path(f"data/weather_helper/date_loc/date_loc.tsv"), sep="\t", index=False)
 
     return unique_date_loc_id_pairs
 
+
+async def get_date_range_for_loc():
+    # 1. Read the TSV file
+    df = pd.read_csv(UtilDataHandler()._get_absolute_path(f"data/weather_helper/date_loc/date_loc.tsv"), sep="\t")
+
+    # 2. Group by 'locId', find min and max of 'date', and reset index
+    # Note: Since dates are YYYY-MM-DD, string sorting works exactly like date sorting.
+    result = df.groupby('locId')['date'].agg(['min', 'max']).reset_index()
+
+    # 3. Rename columns for clarity (optional)
+    result.columns = ['locId', 'start_date', 'end_date']
+
+    # 4. Write to a new TSV file
+    result.to_csv(UtilDataHandler()._get_absolute_path(f"data/weather_helper/date_loc/date_range_loc.tsv"), sep="\t", index=False)
 
 
 async def main():
@@ -58,21 +64,27 @@ async def main():
 
     print("Preparing to gather Weather Data...")
     # Create date_loc data files (divided into chunks for API limit management)
-    await get_loc_date_pairs(await ebird_data_handler.get_checklists_data())
+    date_loc_pairs = await get_loc_date_pairs(await ebird_data_handler.get_checklists_data())
+    print("Number of date_loc pairs: ", len(date_loc_pairs))
+
+    # Create location max date and min date
+    await get_date_range_for_loc()
+
 
     # Create locId look up to for latitude and longitute
     location_data = await ebird_data_handler.get_location_data()
     location_data.drop_duplicates(inplace=True)
+    print("Number of locations: ", len(location_data))
     # OPTIMIZATION: Convert location_data to a dictionary for O(1) lookup.
     loc_lookup = location_data.set_index("locId")[["latitude", "longitude"]].to_dict('index')
+
 
     print("Gathering Weather Data...")
     weather_data_handler = WeatherDataHandler()
     
-    await weather_data_handler.fetch_weather_data_for_date_loc_pairs(loc_lookup) # automatically finds date_loc pairs in data/weather_helper/date_loc
+    await weather_data_handler.fetch_weather_data(loc_lookup) # automatically finds date_loc pairs in data/weather_helper/date_loc
 
     print("Weather Data Gathering Complete")
-
 
 
 if __name__ == "__main__":
