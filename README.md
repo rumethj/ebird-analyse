@@ -10,7 +10,7 @@ This table contains hourly weather data for various locations.
 
 | Column | Type | Description |
 |---|---|---|
-| `date` | `DATETIME` | The timestamp for the weather data record. |
+| `date` | `DATETIME` | The timestamp in UTC for the weather data record. |
 | `temperature_2m` | `FLOAT` | Temperature in Celsius at 2 meters above ground. |
 | `apparent_temperature` | `FLOAT` | The perceived temperature. |
 | `rain` | `FLOAT` | Rain precipitation in millimeters. |
@@ -21,6 +21,8 @@ This table contains hourly weather data for various locations.
 | `cloud_cover_low` | `FLOAT` | Low-level cloud cover percentage. |
 | `wind_speed_10m` | `FLOAT` | Wind speed at 10 meters above ground. |
 | `wind_speed_100m` | `FLOAT` | Wind speed at 100 meters above ground. |
+| `wind_direction_10m`| `FLOAT` | Wind direction at 10 meters above ground. | 
+| `wind_direction_100m`| `FLOAT` | Wind direction at 100 meters above ground. | 
 | `locId` | `STRING` | The unique identifier for the location, foreign key to `checklists.tsv`. |
 
 ### `locations.tsv`

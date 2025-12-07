@@ -9,6 +9,7 @@ The handler extends DataHandler to provide specialized functionality for
 working with weather data stored in TSV format.
 """
 
+from hashlib import file_digest
 import os
 import pandas as pd
 from pandas import DataFrame
@@ -45,6 +46,14 @@ class WeatherDataHandler(DataHandler):
         self.date_loc_file = self._get_absolute_path("data/weather_helper/date_loc/date_range_loc.tsv")
         self.date_loc_status_file_path = self._get_absolute_path("data/weather_helper/date_loc_status/done.tsv")
         self.weather_data_path = self._get_absolute_path("data/weather/weather.tsv")
+
+
+    async def get_weather_data(self) -> DataFrame:
+        file_path = self.weather_data_path
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            print(f"Weather data file not found: {file_path}")
+            return pd.DataFrame()
+        return pd.read_csv(file_path, sep=self.tsv_config.delimiter, na_values=self.tsv_config.na_values)
 
     
     async def _make_weather_api_request(self, location_data: dict, start_date: date, end_date: date):
@@ -150,7 +159,7 @@ class WeatherDataHandler(DataHandler):
 
         print("Number of incompletes date loc pairs: ", len(incomplete_date_loc_df))
         
-        sem = asyncio.Semaphore(20)
+        sem = asyncio.Semaphore(5)
 
         async def processing_worker(row):
             """ 

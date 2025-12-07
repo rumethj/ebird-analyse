@@ -10,7 +10,6 @@ and includes built-in rate limiting and file management capabilities.
 """
 
 
-from multiprocessing import Value
 import os
 import ast
 import asyncio
@@ -18,7 +17,8 @@ import pandas as pd
 from dataclasses import dataclass, field
 from datetime import date
 from dotenv import load_dotenv
-from .base import APIConfig, DataHandler, TSVConfig
+
+from .base import APIConfig, DataHandler
 
 
 # Load environment variables from .env file
@@ -52,6 +52,7 @@ class eBirdDataHandler(DataHandler):
             raise ValueError("Project root directory must be provided or set in PROJECT_ROOT_DIR env var")
         
         self.location_data_path: str = self._get_absolute_path("data/locations/locations.tsv")
+        self.checklist_records_path: str = self._get_absolute_path("data/checklist_records/checklist_records.tsv")
 
 
     async def get_location_data(self) -> pd.DataFrame:
@@ -61,6 +62,15 @@ class eBirdDataHandler(DataHandler):
             return pd.DataFrame()
         return pd.read_csv(file_path, sep=self.tsv_config.delimiter, na_values=self.tsv_config.na_values)
 
+
+    async def get_checklist_records_data(self) -> pd.DataFrame:
+        file_path = self.checklist_records_path
+        if not os.path:
+            print(f"Checklist record data file not found: {file_path}")
+            return pd.DataFrame()
+
+        return pd.read_csv(file_path, sep=self.tsv_config.delimiter, na_values=self.tsv_config.na_values)
+        
 
     async def get_checklists_data(self, checklist_data_path: str = "data/checklists") -> pd.DataFrame:
         """Asynchronously load and concatenate all TSV checklist files into a single DataFrame.
@@ -138,8 +148,7 @@ class eBirdDataHandler(DataHandler):
             >>> checklist_ids = {"S12345678", "S87654321"}
             >>> await handler.fetch_checklist_record_for_checklists(checklist_ids)
         """
-        file_path = "data/checklist_records/"
-        file_path = self._get_absolute_path(file_path)
+        file_path = os.dirname(self.checklist_records_path)
         
         # Skip if directory already exists and has content
         if os.path.exists(file_path) and os.path.isdir(file_path) and os.listdir(file_path):
@@ -163,8 +172,7 @@ class eBirdDataHandler(DataHandler):
         result: list[tuple[str, dict]] = await asyncio.gather(*(fetch_one(cl) for cl in checklist_list))
 
         for checklist_id, record in result:
-            file_path = "data/checklist_records/checklist_records.tsv"
-            file_path = self. _get_absolute_path(file_path)
+            file_path = self.checklist_records_path
 
             fieldnames = self._get_tsv_fieldnames(file_path)
             if not fieldnames:
