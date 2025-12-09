@@ -128,12 +128,7 @@ class WeatherDataHandler(DataHandler):
 
         hourly_dataframe["locId"] = location_data["locId"]
         
-        async with self.file_lock:
-            os.makedirs(os.path.dirname(self.weather_data_path), exist_ok=True)
-            if not os.path.exists(self.weather_data_path) or os.path.getsize(self.weather_data_path) == 0:
-                hourly_dataframe.to_csv(self.weather_data_path, sep='\t', index=False)
-            else:
-                hourly_dataframe.to_csv(self.weather_data_path, sep='\t', index=False, mode='a', header=False)
+        return hourly_dataframe
 
 
     async def fetch_weather_data(self, loc_lookup: Dict[str, Dict[str, Any]]) -> None:
@@ -182,7 +177,15 @@ class WeatherDataHandler(DataHandler):
                     }
                     # This is the actual network call
                     try:
-                        await self._make_weather_api_request(loc_data, start_date, end_date)
+                        hourly_dataframe = await self._make_weather_api_request(loc_data, start_date, end_date)
+                        
+                        # On success, write the data to the file and return the row to be marked as complete
+                        async with self.file_lock:
+                            os.makedirs(os.path.dirname(self.weather_data_path), exist_ok=True)
+                            if not os.path.exists(self.weather_data_path) or os.path.getsize(self.weather_data_path) == 0:
+                                hourly_dataframe.to_csv(self.weather_data_path, sep='\t', index=False)
+                            else:
+                                hourly_dataframe.to_csv(self.weather_data_path, sep='\t', index=False, mode='a', header=False)
                         # On success, return the identifiers to be marked as complete
                         return row
                         # return {"date": row["date"], "locId": loc_id}

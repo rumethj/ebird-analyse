@@ -24,3 +24,7 @@ Thumbs.db
 
 # Data
 data/
+
+# Temporary items
+temp*
+*.tmp

@@ -148,7 +148,7 @@ class eBirdDataHandler(DataHandler):
             >>> checklist_ids = {"S12345678", "S87654321"}
             >>> await handler.fetch_checklist_record_for_checklists(checklist_ids)
         """
-        file_path = os.dirname(self.checklist_records_path)
+        file_path = os.path.dirname(self.checklist_records_path)
         
         # Skip if directory already exists and has content
         if os.path.exists(file_path) and os.path.isdir(file_path) and os.listdir(file_path):
