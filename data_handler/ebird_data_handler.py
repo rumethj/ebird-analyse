@@ -53,6 +53,7 @@ class eBirdDataHandler(DataHandler):
         
         self.location_data_path: str = self._get_absolute_path("data/locations/locations.tsv")
         self.checklist_records_path: str = self._get_absolute_path("data/checklist_records/checklist_records.tsv")
+        self.observation_data_path: str = self._get_absolute_path("data/observations/observations.tsv")
 
 
     async def get_location_data(self) -> pd.DataFrame:
@@ -122,7 +123,39 @@ class eBirdDataHandler(DataHandler):
         dataframes = await asyncio.gather(*read_tasks)
 
         return pd.concat(dataframes, ignore_index=True) if dataframes else pd.DataFrame()
-    
+
+
+    async def fetch_observations_from_checklist_records(self) -> None:
+        file_path = self.observation_data_path
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            print(f"Skipping fetch: {file_path} already has content")
+            return
+        
+        checklist_df = await self.get_checklist_records_data()
+        if checklist_df.empty:
+            print("Checklist records data is empty. No observations to fetch.")
+            return
+
+        all_obs_df = []
+        for index, row in checklist_df.iterrows():
+            obs_raw = row['obs']
+            sub_id = row['subId']
+            
+            try:
+                obs_list = ast.literal_eval(obs_raw) if isinstance(obs_raw, str) else obs_raw
+                if isinstance(obs_list, list) and obs_list:
+                    obs_df = pd.DataFrame(obs_list)
+                    obs_df['subId'] = sub_id
+                    all_obs_df.append(obs_df)
+            except (ValueError, SyntaxError) as e:
+                print(f"Warning: Could not parse observation data for subId {sub_id}: {e}")
+
+        if all_obs_df:
+            final_obs_df = pd.concat(all_obs_df, ignore_index=True)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            final_obs_df.to_csv(file_path, sep='\t', index=False)
+            print(f"Saved all observations to {file_path}")
+
 
     async def fetch_checklist_record_for_checklists(self, checklist_list: set = None) -> None:
         """Fetch detailed checklist records for a set of checklist IDs and save to TSV.

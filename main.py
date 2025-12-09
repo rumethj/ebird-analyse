@@ -57,6 +57,8 @@ async def main():
     # Fetch Checklists Records for each
     await ebird_data_handler.fetch_checklist_record_for_checklists() # Auto detects checklist
 
+    await ebird_data_handler.fetch_observations_from_checklist_records()
+
     await ebird_data_handler.fetch_loc_data_from_checklists()
 
     print("eBird Data Gathering Complete")
