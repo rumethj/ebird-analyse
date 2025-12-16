@@ -54,8 +54,19 @@ class WeatherDataHandler(DataHandler):
             print(f"Weather data file not found: {file_path}")
             return pd.DataFrame()
         return pd.read_csv(file_path, sep=self.tsv_config.delimiter, na_values=self.tsv_config.na_values)
-
     
+
+    async def _clean_weather_data_duplicates(self):
+        weather_df = await self.get_weather_data()
+        before_count = len(weather_df)
+        weather_df = weather_df.drop_duplicates(subset=['date', 'locId'])
+        after_count = len(weather_df)
+        if after_count < before_count:
+            print(f"Removed {before_count - after_count} duplicate weather records")
+            # Save cleaned data back to file
+            # weather_df.to_csv(self.weather_data_path, sep=self.tsv_config.delimiter, index=False)
+
+
     async def _make_weather_api_request(self, location_data: dict, start_date: date, end_date: date):
         # Ref: https://open-meteo.com/en/docs/historical-weather-api?latitude=6.3772655&longitude=80.1361152&start_date=2022-01-01&end_date=2025-11-01&hourly=temperature_2m,weather_code,rain,cloud_cover,apparent_temperature,wind_speed_10m&timezone=Asia%2FBangkok
         
@@ -205,8 +216,9 @@ class WeatherDataHandler(DataHandler):
                 # 2. Create the list INSIDE the group using 'tg'
                 # This starts them and links them to the group's error handler
                 tasks = [
-                    tg.create_task(processing_worker(row)) 
+                    tg.create_task(processing_worker(row))
                     for row in rows
+                    if row['locId'] not in ["L51970428", "L40975620"] 
                 ]
                 
                 # The code will block here automatically until all tasks are done

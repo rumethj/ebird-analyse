@@ -59,10 +59,11 @@ async def main():
 
     await ebird_data_handler.fetch_observations_from_checklist_records()
 
+    await ebird_data_handler.fetch_species_data_from_observations()
+
     await ebird_data_handler.fetch_loc_data_from_checklists()
 
     print("eBird Data Gathering Complete")
-
 
     print("Preparing to gather Weather Data...")
     # Create date_loc data files (divided into chunks for API limit management)
@@ -83,6 +84,8 @@ async def main():
 
     print("Gathering Weather Data...")
     weather_data_handler = WeatherDataHandler()
+
+    # await weather_data_handler._clean_weather_data_duplicates()
     
     await weather_data_handler.fetch_weather_data(loc_lookup) # automatically finds date_loc pairs in data/weather_helper/date_loc
 

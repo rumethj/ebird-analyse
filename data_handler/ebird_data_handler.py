@@ -13,6 +13,7 @@ and includes built-in rate limiting and file management capabilities.
 import os
 import ast
 import asyncio
+import re
 import pandas as pd
 from dataclasses import dataclass, field
 from datetime import date
@@ -54,6 +55,7 @@ class eBirdDataHandler(DataHandler):
         self.location_data_path: str = self._get_absolute_path("data/locations/locations.tsv")
         self.checklist_records_path: str = self._get_absolute_path("data/checklist_records/checklist_records.tsv")
         self.observation_data_path: str = self._get_absolute_path("data/observations/observations.tsv")
+        self.species_data_path: str = self._get_absolute_path("data/species/species.tsv")
 
 
     async def get_location_data(self) -> pd.DataFrame:
@@ -155,6 +157,14 @@ class eBirdDataHandler(DataHandler):
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             final_obs_df.to_csv(file_path, sep='\t', index=False)
             print(f"Saved all observations to {file_path}")
+
+
+    async def get_observations_data(self) -> pd.DataFrame:
+        file_path = self.observation_data_path
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            print(f"Observation data file not found: {file_path}")
+            raise FileNotFoundError(f"Observation data file not found: {file_path}")
+        return pd.read_csv(file_path, sep=self.tsv_config.delimiter, na_values=self.tsv_config.na_values)
 
 
     async def fetch_checklist_record_for_checklists(self, checklist_list: set = None) -> None:
@@ -323,3 +333,65 @@ class eBirdDataHandler(DataHandler):
             write_header = self._should_write_header(file_path)
             self._write_tsv_record(file_path, record, fieldnames=fieldnames, write_header=write_header)
             print(f"Saved location data for {record.get('locId', 'unknown')}")
+
+
+    async def fetch_species_data_from_observations(self):
+        # Get observed species
+        observations_df = await self.get_observations_data()
+        species_codes = (
+            observations_df["speciesCode"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        file_path = self.species_data_path
+
+        # Skip if file already exists and has content
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            existing_fieldnames = self._get_tsv_fieldnames(file_path)
+            if existing_fieldnames:
+                print(f"Skipping fetch: {file_path} already has content")
+                return
+            # File has bytes but no header (e.g., whitespace from a previous run). Reset it.
+            with open(file_path, "w", newline=""):
+                pass
+        
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        semaphore = asyncio.Semaphore(20)
+
+        async def fetch_one(species_codes_batch: list[str]) -> tuple[list[str], list[dict]]:
+            async with semaphore:
+                return species_codes_batch, await self._make_api_request(
+                    f"https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json&species={','.join(species_codes_batch)}"
+                )
+
+        # Fetch with concurrency limited to 20 at a time.
+        # Query in batches to avoid extremely long URLs.
+        batch_size = 100
+        species_code_batches = [species_codes[i : i + batch_size] for i in range(0, len(species_codes), batch_size)]
+        results: list[tuple[list[str], list[dict]]] = await asyncio.gather(
+            *(fetch_one(batch) for batch in species_code_batches)
+        )
+
+        for batch, species_data in results:
+            if not species_data:
+                continue
+
+            fieldnames = self._get_tsv_fieldnames(file_path)
+            if not fieldnames:
+                fieldnames = self._get_fieldnames_from_records(species_data)
+            
+            write_header = self._should_write_header(file_path)
+            self._write_tsv_records(file_path, species_data, fieldnames=fieldnames, write_header=write_header)
+            print(f"Saved species data for batch ({len(batch)} codes, {len(species_data)} records)")
+
+
+    async def get_species_data(self) -> pd.DataFrame:
+        file_path = self.species_data_path
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            print(f"Species data file not found: {file_path}")
+            raise FileNotFoundError(f"Species data file not found: {file_path}")
+        return pd.read_csv(file_path, sep=self.tsv_config.delimiter, na_values=self.tsv_config.na_values)
