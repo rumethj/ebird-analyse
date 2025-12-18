@@ -15,6 +15,30 @@ import pandas as pd
 from pandas import DataFrame
 from data_handler import ManualDataHandler, UtilDataHandler, WeatherDataHandler, eBirdDataHandler
 
+
+def taxon_rollup(species_df: DataFrame) -> DataFrame:
+    # find subspecies entries
+    species_df.drop_duplicates(inplace=True)
+
+    # Define which columns to update (All columns except 'speciesCode' and 'category', 'reportAs' for verifcation)
+    cols_to_update = [col for col in species_df.columns if col not in ['speciesCode', 'category', 'reportAs']]
+
+    for row_index, row in species_df.iterrows():
+        if row['category'] == "issf":
+            # Safety check: ensure reportAs is not empty/NaN
+            if pd.isna(row['reportAs']):
+                continue
+
+            # find matching species for subspecies
+            matches = species_df[species_df['speciesCode'] == row['reportAs']]
+            # replace all values of species except for 'speciesCode' in this row
+            if not matches.empty:
+                species_data = matches.iloc[0]
+                species_df.loc[row_index, cols_to_update] = species_data[cols_to_update].values
+
+    return species_df
+
+
 async def get_complete_dataset(force_collect: bool = False) -> DataFrame:
     # Big dataset path
     util_data_handler = UtilDataHandler()
@@ -33,39 +57,39 @@ async def get_complete_dataset(force_collect: bool = False) -> DataFrame:
     checklist_records_df = await ebird_data_handler.get_checklist_records_data()
 
     locations_df = await ebird_data_handler.get_location_data()
+    locations_df = locations_df.drop_duplicates()
     observations_df = await ebird_data_handler.get_observations_data()
-    species_df = await ebird_data_handler.get_species_data()
 
     manual_data_handler = ManualDataHandler()
-    priority_species_df = await manual_data_handler.get_priority_species_data()
     weather_code_df = await manual_data_handler.get_weather_code_data()
 
-    weather_data_handler = WeatherDataHandler()
-    weather_df = await weather_data_handler.get_weather_data()
 
     # Combining datasets
 
     ## Combine Checklists and Checklist Records
-    checklists_expanded_records = pd.merge(checklists_df, checklist_records_df, on=['subId','locId', 'numSpecies', 'userDisplayName'], how='left')
-    checklists_expanded_locations = pd.merge(checklists_expanded_records, locations_df, on=['locId', 'subnational1Code'], how='left')
+    # numSpecies is inconsistent between checklists_df and checklist_records_df, so we exclude it from merge keys
+    checklists_expanded_records = pd.merge(checklists_df, checklist_records_df, on=['subId','locId', 'userDisplayName'], how='left')
+    print(f"Duplicated check 1: {checklists_expanded_records.duplicated().sum()}")
+
+    checklists_expanded_locations = pd.merge(checklists_expanded_records, locations_df, on=['locId', 'subnational1Code'], how='left')#, validate="m:1")
+    print(f"Duplicated check 2: {checklists_expanded_locations.duplicated().sum()}")
 
     # New additions
     checklist_expanded = pd.merge(checklists_expanded_locations, observations_df, on='subId', how='left')
-    checklist_expanded = pd.merge(checklist_expanded, species_df, on='speciesCode', how='left')
-    checklist_expanded = pd.merge(checklist_expanded, priority_species_df, on='speciesCode', how='left', suffixes=('', '_priority'))
+    print(f"Duplicated check 3: {checklist_expanded.duplicated().sum()}")
 
-    # # Any species not present in priority_species_df should default to False
-    # for col in ['isHighValue_LK', 'isEndemic_LK']:
-    #     if col not in checklist_expanded.columns:
-    #         checklist_expanded[col] = False
-    #     else:
-    #         # Use pandas' nullable boolean dtype to avoid FutureWarning about
-    #         # silent downcasting during fillna on object dtype columns.
-    #         checklist_expanded[col] = (
-    #                                     checklist_expanded[col]
-    #                                     .astype("boolean")  # <--- Convert to nullable boolean first
-    #                                     .fillna(False)      # Now fillna works safely without warning
-    #                                     .astype(bool))
+    # Add Species Data
+    species_df = await ebird_data_handler.get_species_data()
+    # Species roll up
+    species_df = taxon_rollup(species_df)
+
+    checklist_expanded = pd.merge(checklist_expanded, species_df, on='speciesCode', how='left')
+    print(f"Duplicated check 4: {checklist_expanded.duplicated().sum()}")
+    
+    
+    priority_species_df = await manual_data_handler.get_priority_species_data()
+    checklist_expanded = pd.merge(checklist_expanded, priority_species_df, on='speciesCode', how='left', suffixes=('', '_priority'))
+    print(f"Duplicated check 5: {checklist_expanded.duplicated().sum()}")
 
     ## Combine Weather data
 
@@ -74,6 +98,10 @@ async def get_complete_dataset(force_collect: bool = False) -> DataFrame:
     ### Convert the Indian Standard Time(IST) to UTC
     checklist_expanded['isoObsDate'] = checklist_expanded['isoObsDate'].dt.tz_localize('Asia/Kolkata').dt.tz_convert('UTC')
     checklists_expanded_f = checklist_expanded.rename(columns={'isoObsDate': 'time_stamp_utc'})
+    
+    weather_data_handler = WeatherDataHandler()
+    weather_df = await weather_data_handler.get_weather_data()
+    weather_df = weather_df.drop_duplicates()
 
     ### Prepare weather table
     weather_df['date'] = pd.to_datetime(weather_df['date'])

@@ -2,6 +2,7 @@ import os
 import asyncio
 import csv
 import httpx
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
@@ -171,8 +172,25 @@ class DataHandler(ABC):
             if write_header and fieldnames:
                 writer.writeheader()
             if isinstance(record, dict):
-                row = {key: record.get(key, "") for key in fieldnames}
+                row = {key: self._sanitize_tsv_value(record.get(key, "")) for key in fieldnames}
                 writer.writerow(row)
+
+    def _sanitize_tsv_value(self, value):
+        """Sanitize values before writing to TSV.
+
+        Prevents embedded newlines from creating multi-line TSV rows.
+        """
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list, tuple, set)):
+            # Preserve complex types as-is (DictWriter will stringify them).
+            return value
+        if isinstance(value, str):
+            # Replace both real newlines and literal escape sequences.
+            cleaned = value.replace("\\r", " ").replace("\\n", " ")
+            cleaned = re.sub(r"[\r\n]+", " ", cleaned)
+            return cleaned.strip()
+        return value
     
     def _write_tsv_records(self, file_path: str, records: list[dict], fieldnames: Optional[list[str]] = None,
                          write_header: bool = False) -> None:
@@ -204,7 +222,7 @@ class DataHandler(ABC):
                 writer.writeheader()
             for item in records:
                 if isinstance(item, dict):
-                    row = {key: item.get(key, "") for key in fieldnames}
+                    row = {key: self._sanitize_tsv_value(item.get(key, "")) for key in fieldnames}
                     writer.writerow(row)
     
     async def _make_api_request(self, url: str, headers: Optional[dict] = None, 
