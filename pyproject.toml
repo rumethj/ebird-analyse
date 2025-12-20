@@ -19,6 +19,9 @@ dependencies = [
     "openmeteo_requests",
     "requests_cache",
     "retry_requests",
+    "statsmodels>=0.14.6",
+    "geopandas>=1.1.1",
+    "scikit-learn>=1.8.0",
 ]
 
 
