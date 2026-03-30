@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "matplotlib>=3.7.0",
+    "matplotlib_inline>=0.2.1",
     "seaborn>=0.12.0",
     "openmeteo_requests",
     "requests_cache",
@@ -22,6 +23,9 @@ dependencies = [
     "statsmodels>=0.14.6",
     "geopandas>=1.1.1",
     "scikit-learn>=1.8.0",
+    "xgboost>=2.0.0",
+    "jupyterlab>=4.5.6",
+    "h3>=4.0.0",
 ]
 
 

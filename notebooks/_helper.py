@@ -49,7 +49,7 @@ async def get_complete_dataset(force_collect: bool = False) -> DataFrame:
     if not force_collect:
         if os.path.exists(complete_data_path) and os.path.getsize(complete_data_path) > 0:
             print("Loading complete dataset from disk...")
-            df = pd.read_csv(complete_data_path, sep='\t')
+            df = pd.read_csv(complete_data_path, sep='\t', low_memory=False)
             return df
 
     ebird_data_handler = eBirdDataHandler()

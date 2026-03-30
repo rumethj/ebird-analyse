@@ -28,3 +28,4 @@ data/
 # Temporary items
 temp*
 *.tmp
+.cache.sqlite
